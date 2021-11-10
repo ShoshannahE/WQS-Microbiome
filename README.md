@@ -2,6 +2,8 @@
 
 These files contain the code used for analysis in the manuscript "Human Microbiome Mixture Analysis using Weighted Quantile Sum Regression." Some portions of the analysis were done in R, and some in SAS.
 
+Files will be released upon acceptance for publication.
+
 Files should be used in the following order.
 1. HMP data pull and processing (R)
 2. HMP Variable Simulation (SAS)
