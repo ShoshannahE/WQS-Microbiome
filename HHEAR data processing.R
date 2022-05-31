@@ -11,6 +11,82 @@ pacman::p_loaded()
 
 
 
+###############
+##  FILE NAMES & DIRECTORY
+###############
+# files for import (pulled directly from EIGC-provided files)
+inputfiles <- list(
+  feat = here::here("table.qza"), 
+  taxo = here::here("gg_97_taxonomy.qza"), 
+  treeroot= here::here("rooted_tree_masked_alignment.qza"),
+  meta = here::here("metadata.txt")
+)
+
+
+###############
+##  IMPORT DATA
+###############
+getwd()
+# convert imported CHEAR files to phyloseq object 
+phyobj<-qza_to_phyloseq(features=inputfiles$feat,
+                        taxonomy=inputfiles$taxo,
+                        tree=inputfiles$treeroot,
+                        metadata=inputfiles$meta)
+
+#I will export the OTU and taxonomy files to CSVs so that I can work with them outside of phyloseq.
+
+# define individual objects
+taxtable<-as.data.frame(tax_table(phyobj)) #get taxonomy
+phytree<-phy_tree(phyobj) #get phytree
+metadata<-sample_data(phyobj) #get sample metadata
+asvs<-otu_table(phyobj) #get asvs
+
+
+
+# review imported data
+phyobj
+# phyloseq-class experiment-level object
+# otu_table()   OTU Table:         [ 8186 taxa and 311 samples ]
+# sample_data() Sample Data:       [ 311 samples by 16 sample variables ]
+# tax_table()   Taxonomy Table:    [ 8186 taxa by 7 taxonomic ranks ]
+# phy_tree()    Phylogenetic Tree: [ 8186 tips and 8024 internal nodes ]
+
+
+
+##########################
+##  SUBSET EXPERIMENTAL SAMPLES
+##########################
+# Subset sample to exclude controls 
+sub.phyobj <-subset_samples(phyobj, SubjectGroup %in% (c("A", "B", "C", "Missing")))
+sub.phyobj
+# phyloseq-class experiment-level object
+# otu_table()   OTU Table:         [ 8186 taxa and 279 samples ]
+# sample_data() Sample Data:       [ 279 samples by 16 sample variables ]
+# tax_table()   Taxonomy Table:    [ 8186 taxa by 7 taxonomic ranks ]
+# phy_tree()    Phylogenetic Tree: [ 8186 tips and 8024 internal nodes ]
+
+
+###########
+# convert phyloseq objects to data frames
+OTU = as.data.frame(otu_table(sub.phyobj))
+TAX = as.data.frame(tax_table(sub.phyobj))
+
+##########
+
+#the OTU table needs to be transposed
+library(data.table)
+otu_transpose <- transpose(OTU)
+rownames(otu_transpose) <- colnames(OTU)
+colnames(otu_transpose) <- rownames(OTU)
+
+
+# export the data frames as CSV files
+write.csv(otu_transpose,'micheals_asv_rows.csv')
+write.csv(TAX,'micheals_tax_table.csv')
+
+
+#I also gave the ASVs new numbers in the OTU and tax files because some downstream steps were having issues with the super long ASV names.
+
 ##### Moira's Processing Code #####
 library(readxl)
 library(dplyr)
@@ -20,7 +96,7 @@ library(stringr)
 library(reshape2)
 library(lubridate)
 
-#this code will merge the specimen IDs (SID) to participant IDs (PIDs)
+#this code will merge the specimen IDs (SID)  to participant IDs (PIDs)
 #Written by MB 3/8/22
 
 ##upload the microbioem dataset
@@ -46,16 +122,13 @@ all3 <- all2 %>%
   summarise(avg=mean(value))
 #make datset wide again, with the newly averaged values of the duplicate pairs
 micro <- dcast(all3, PID ~ variable, value.var="avg")
-#
-# table(all$QC_flag) #13 duplicates
-#to remove datasets in the environment & clean up
-#rm(a)
 
 
-
+#read in the epi file and change the pid lable
 epi <- read.csv('1977_EPI_DATA.csv')
 epi <- rename(epi, PID=pid)
-####
+
+#####
 
 
 #####
@@ -78,20 +151,21 @@ subset.clean <- subset[complete.cases(subset), ]
 
 
 
-#now I need to read in the taxonomy table.
+#now I need to read in the taxonomy table with ASV numbers.
 tax <- read.csv('micheals_tax_table.csv')
 
-#Setting the datasets so they have the same observations and ASVs
 row.names(subset.clean) = subset.clean$PID
 row.names(micro) = micro$PID
 row.names(tax) = tax$ASV
+
+
 OTU.clean = micro[row.names(micro) %in% row.names(subset.clean),]
 epi.clean = subset.clean[row.names(subset.clean) %in% row.names(OTU.clean),]
 tax.clean = tax[row.names(tax) %in% colnames(OTU.clean),]
-
-#removing these variables after I set the rownames
 tax.clean = tax.clean[,-which(names(tax.clean) %in% c("ASV"))]
 OTU.clean = OTU.clean[,-which(names(OTU.clean) %in% c("PID"))]
+
+
 
 #making sure the data are all in the same order
 OTU.clean = OTU.clean[order(row.names(OTU.clean)),]
