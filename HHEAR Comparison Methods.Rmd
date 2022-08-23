@@ -1,0 +1,261 @@
+---
+title: "HMP Michels Sensitivity Analyses"
+author: "Moira"
+date: "2022-07-22"
+output: word_document
+---
+
+```{r setup, echo=FALSE, warnings= FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+#7/19/22 create bmi category, make asvs relative abundance
+
+
+#####Installing and loading packages#######
+#Don't actually need all of these packages for this code, but I always install them anyway.
+
+# BiocManager::install(c("phyloseq", "DESeq2"))
+# # install.packages('pacman')
+pacman::p_load("devtools","here", "BiocManager", "MASS", "lattice", "lmtest", "plyr" , "pscl", "assertr", "tidyverse", "reshape2", "janitor", "dada2", "phyloseq", "qiime2R", "ggplot2", "DESeq2", "GUniFrac", "vegan", "LDM", "scales", "grid", "ggsci", "ggpubr", "viridis", "picante", "knitr", "gridExtra")
+library(pacman)
+pacman::p_loaded()
+
+library(ape)
+library(dplyr)
+library(ggplot2)
+library(gplots)
+library(lme4)
+library(phangorn)
+library(plotly)
+library(tidyr)
+library(magrittr)
+library(reshape2)
+library(randomForest)
+library(gt)
+library(gtsummary)
+library(viridis)
+library(phyloseq)
+library(dplyr)
+library(expss)
+library(vegan)
+
+setwd("C:\\Users\\bixbym01\\OneDrive - The Mount Sinai Hospital\\HMP Microbiome\\Michels Microbiome\\")
+
+###the asvs file will need to be replaced with the the processed dataset that we create
+asvs <- read.csv("Final Processed Data\\micheals_HMP_asv_table.csv") #already 10% detect
+epi <- read.csv("Final Processed Data\\micheals_HMP_epi_table.csv")
+tax <- read.csv("Final Processed Data\\micheals_HMP_tax_table.csv")
+
+###make the asvs relative abundance
+
+x <- colnames(asvs[,2:501])
+
+asvs2 <- asvs
+#relative abundance
+asvs3 <-t(apply(asvs2[2:501],1, function(x) x/sum(x)))
+asvs3 %<>%  data.frame()
+asvs3[asvs3 == 0] <- NA
+
+
+######Data Processing######
+epi <- epi %>% mutate(
+  age_stool =as.numeric(age_stool),
+  lactdurdays =as.numeric(lactdurdays),
+  # antro_baz_depo=as.factor(antro_baz_depo),
+  birth_mode=factor(birth_mode,
+                    levels = c(0,1),
+                    labels = c("C-section", "Vaginal")),
+  patb_5_depo=factor(patb_5_depo,
+                     levels = c(0,1),
+                     labels = c("No", "Yes")),
+  # bmi=factor(antro_baz_depo,
+  #            levels=c(-2, -1, 0, 1, 2, 3),
+  #            labels=c("Normal", "Normal", "Normal", "Normal",
+  #                     "Overweight/obese", "Overweight/obese")),
+  # bmi=relevel(bmi, ref="Normal"),
+  bmi = case_when(
+    antro_baz_depo <= 1  ~ "Normal",
+    antro_baz_depo >1 ~ "Overweight/Obese"
+  ),
+  meducat=na_if(meducat, 2),
+  meducat=factor(meducat,
+                 levels = c(0,1),
+                 labels = c("High school or less", "More than high school")),
+  meducat= relevel(meducat, ref="High school or less"))
+
+# patb_5_depo=relevel(patb_5_depo="No"),
+#birth_mode=relevel(birth_mode="Vaginal"))
+
+epi %<>% mutate(bmi= as.factor(bmi))
+
+epi = apply_labels(epi,
+                     age_stool = "Age (years)",
+                     bmi = "BMI category",
+                     birth_mode = "Birth mode (vaginal versus c-section)",
+                     lactdurdays = "Number of days breastfed as infant",
+                     patb_5_depo="Were antibiotics used in the past 6 months (yes vs no)",
+                     meducat="Maternal education")
+
+epi %<>% filter(!is.na(meducat), !is.na(patb_5_depo))
+##need to merge asvs & epi to remove the necessary subjects from asv dataset
+asvs3$X <- asvs$X
+tmp1 <- merge(epi, asvs3, by="X", all=F)
+asvs4 <- tmp1[,10:509]
+asvs4[is.na(asvs4)] <- 0
+
+
+#setting the row names to match in meta and otu files
+row.names(asvs4) = epi$X
+row.names(epi) = epi$X
+row.names(tax) = tax$X
+
+# asvs3 %<>% select(!X)
+epi %<>% select(!X)
+tax %<>% select(!X)
+
+
+asv_physeq = otu_table(as.matrix(asvs4), taxa_are_rows=FALSE)
+tax.physeq = tax_table(as.matrix(tax))
+meta.physeq = sample_data(epi)
+
+physeq.asvs = phyloseq(asv_physeq, tax.physeq, meta.physeq)
+
+```
+## Alpha diversity (Shannon diversity) 
+
+```{r, warning=FALSE, echo= FALSE}
+# #plotting shannon by bmi category
+# # plot_richness(physeq.asvs, "bmi", measures="Shannon")
+# 
+# # #calculating with vegan adds the column to meta file
+# epi$shannon_physeq <- estimate_richness(physeq.asvs, measures="Shannon")
+# # epi$invsimpson.vegan <- diversity(asvs4, index="invsimpson")
+# plot_richness(physeq.asvs, "bmi", measures="Shannon")
+# 
+# # #
+# # # meta.sim <- as.data.frame(sample_data(physeq.asvs))
+# # 
+# # #finding the max, min, mean of alpha diversity
+# # # mean(epi$shannon.vegan)
+# # # min(epi$shannon.vegan)
+# # # max(epi$shannon.vegan)
+# 
+# 
+# #running a linear regression with the alpha diversity calculated in VEGAN
+# 
+# lmshannon = lm(shannon_physeq$Shannon ~ bmi + meducat + birth_mode + age_stool + lactdurdays + patb_5_depo, data = epi)
+# summary(lmshannon)
+# 
+# 
+# tbl_regression(lmshannon)
+# ```
+## Beta Diversity Metrics
+```{r, warning=FALSE, echo= FALSE}
+#Here we're looking at all the obs, colored by simulation variable
+bray_dist <- phyloseq::distance(physeq.asvs, method="bray")
+bray_ord <- ordinate(physeq.asvs, method="MDS", distance=bray_dist)
+p1_bray <- plot_ordination(physeq.asvs, bray_ord, color="bmi") + theme(aspect.ratio=1) +
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+
+  labs(color="BMI Category")+
+  stat_ellipse(size=1)
+p1_bray
+
+
+#Plotting the random var
+p2_bray <- plot_ordination(physeq.asvs, bray_ord, color="bmi") + theme(aspect.ratio=1) +
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+
+  labs(color="BMI Category")+
+  stat_ellipse(size=1)
+p2_bray
+```
+## PERMANOVA Results
+```{r, warning=FALSE, echo= FALSE}
+
+#PERMANOVA
+#This tells us if the beta diversity is significantly different between groups
+#Calculate bray curtis distance and save as a matrix
+BC.dist=vegdist(asvs4, distance="bray")
+```
+A) Bray-Curtis distance
+
+```{r, warning=FALSE, echo= FALSE}
+
+#Run PERMANOVA on distances by the simulated variable.
+adonis2(BC.dist ~ bmi + meducat + birth_mode + age_stool + lactdurdays + patb_5_depo , data = epi, by='margin', permutations = 9999)
+
+#Running the same with Aitchison distance.
+#Looks like I have to CLR transform the OTU table first, and then run the Euclidian distance.
+
+A.dist=vegdist(asvs4, method="euclidean")
+
+```
+B) Aitchison distance distance
+
+```{r, warning=FALSE, echo= FALSE}
+
+#Run PERMANOVA on distances by the simulated variable.
+adonis2(A.dist ~ bmi + meducat + birth_mode + age_stool + lactdurdays + patb_5_depo , data = epi, by='margin', permutations = 9999)
+```
+## SIMPER Analysis
+
+```{r, warning=FALSE, echo= FALSE}
+
+#####SIMPER#####
+#This tells us which OTUs contributed the most variance to the differences in beta diversity between the two comparison groups.
+#running simper by the simulated var
+simp <- simper(asvs4, epi$bmi, permutations=999)
+simp2 <- simp$`Normal_Overweight/Obese`$average
+simp2 %<>% as.data.frame()
+print(simp)
+simp_results <- merge(simp2, tax, by=0)
+simp_results %<>% rename(SIMPER_Wts=".")
+# write.csv(simp_results, "C:\\Users\\bixbym01\\OneDrive - The Mount Sinai Hospital\\HMP Microbiome\\Michels Microbiome\\Results\\SIMPER_Results.csv", row.names=F)
+
+```
+
+
+## Random Forest
+```{r, warning=FALSE, echo= FALSE}
+
+# Make a dataframe of training data with OTUs as column and samples as rows
+predictors <- data.frame(otu_table(physeq.asvs))
+dim(predictors)
+
+# Make one column for our outcome/response variable
+
+# Combine them into 1 data frame
+rf.data <- data.frame(epi$bmi, predictors)
+
+# Random Forest Model
+rf.model <- randomForest(epi.bmi~., data = rf.data, ntree = 100)
+print(rf.model)
+
+# What variables are stored in the output?
+# names(rf.model)
+
+
+# Make a data frame with predictor names and their importance
+imp <- importance(rf.model)
+imp <- data.frame(predictors = rownames(imp), imp)
+
+# Order the predictor levels by importance
+imp.sort <- arrange(imp, desc(MeanDecreaseGini))
+# imp.sort$predictors <- factor(imp.sort$predictors, levels = imp.sort$predictors)
+
+# Select the top 20 predictors
+imp.r.20 <- imp.sort[1:20, ]
+# here's the whole list
+# imp.r.869 <- imp.sort[1:869, ]
+# I want to export this data file;
+# write.csv(imp.sort, file = 'C:\\Users\\bixbym01\\OneDrive - The Mount Sinai Hospital\\HMP Microbiome\\Michels Microbiome\\Results\\RandomForestOTUImportance_random.csv', row.names=F)
+
+##link the asv names to these
+# ggplot
+print(ggplot(imp.r.20, aes(x = Family, y = MeanDecreaseGini)) +
+  geom_bar(stat = "identity", fill = "indianred") +
+  coord_flip() +
+  ggtitle("Top 20 ASVs by Family for classifying BMI  Groups"))
+```
